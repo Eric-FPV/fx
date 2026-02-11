@@ -17,6 +17,8 @@
     .mono{font-variant-numeric:tabular-nums}
     .top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
     .pill{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid #ddd;font-size:12px;color:#333}
+    details{margin-top:10px}
+    code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px}
   </style>
 </head>
 <body>
@@ -24,7 +26,7 @@
     <h2 style="margin:0">一键汇率</h2>
     <span class="pill" id="net">离线</span>
   </div>
-  <p class="muted">点一次“刷新汇率”即可抓取最新报价（USD/CNY/JPY/THB），并自动计算常用交叉汇率。</p>
+  <p class="muted">点一次“刷新汇率”即可抓取最新报价（USD/CNY/JPY/THB）。如主数据源不可用，会自动切换备用源。</p>
 
   <button id="btn">刷新汇率</button>
 
@@ -47,6 +49,11 @@
     <div class="row"><div>JPY → THB</div><div class="mono" id="jpy_thb"></div></div>
 
     <p class="muted" id="meta"></p>
+
+    <details>
+      <summary class="muted">调试信息（可选）</summary>
+      <pre class="muted" style="white-space:pre-wrap"><code id="dbg"></code></pre>
+    </details>
   </div>
 
 <script>
@@ -55,14 +62,6 @@ const $ = (id)=>document.getElementById(id);
 function fmt(x, d=6){
   if(!isFinite(x)) return "—";
   return Number(x).toFixed(d);
-}
-
-// 数据源：exchangerate.host
-async function fetchRatesUSD() {
-  const url = "https://api.exchangerate.host/latest?base=USD&symbols=CNY,JPY,THB";
-  const res = await fetch(url, {cache:"no-store"});
-  if(!res.ok) throw new Error("HTTP " + res.status);
-  return await res.json();
 }
 
 function setStatus(msg, isErr=false){
@@ -76,7 +75,6 @@ function showRates(r){
   $("usd_jpy").textContent = fmt(JPY, 6);
   $("usd_thb").textContent = fmt(THB, 6);
 
-  // 交叉汇率：A->B = (USD->B) / (USD->A)
   $("cny_thb").textContent = fmt(THB / CNY, 6);
   $("thb_cny").textContent = fmt(CNY / THB, 6);
 
@@ -87,8 +85,53 @@ function showRates(r){
   $("jpy_thb").textContent = fmt(THB / JPY, 8);
 
   const ts = new Date().toLocaleString();
-  $("meta").textContent = `基准：${r.base}；接口日期字段：${r.date || "—"}；本机刷新时间：${ts}`;
+  $("meta").textContent = `数据源：${r.source}；基准：USD；更新时间：${r.updated || r.date || "—"}；本机刷新：${ts}`;
   $("rates").style.display = "block";
+  $("dbg").textContent = JSON.stringify(r.raw, null, 2);
+}
+
+function normalizeFromErApi(raw){
+  if(raw && raw.result === "success" && raw.base_code === "USD" && raw.rates){
+    return {
+      source: "open.er-api.com (ExchangeRate-API)",
+      updated: raw.time_last_update_utc || raw.time_last_update_unix,
+      rates: { CNY: raw.rates.CNY, JPY: raw.rates.JPY, THB: raw.rates.THB },
+      raw
+    };
+  }
+  throw new Error("主源返回格式异常");
+}
+
+function normalizeFromFrankfurter(raw){
+  if(raw && raw.rates){
+    return {
+      source: "api.frankfurter.app (ECB reference)",
+      date: raw.date,
+      rates: { CNY: raw.rates.CNY, JPY: raw.rates.JPY, THB: raw.rates.THB },
+      raw
+    };
+  }
+  throw new Error("备用源返回格式异常");
+}
+
+async function fetchJson(url){
+  const res = await fetch(url, {cache:"no-store"});
+  if(!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+
+async function fetchRatesUSD(){
+  try{
+    const raw = await fetchJson("https://open.er-api.com/v6/latest/USD");
+    const norm = normalizeFromErApi(raw);
+    if([norm.rates.CNY, norm.rates.JPY, norm.rates.THB].some(v => typeof v !== "number")) throw new Error("主源缺少所需币种");
+    return norm;
+  }catch(e){
+    const raw2 = await fetchJson("https://api.frankfurter.app/latest?from=USD&to=CNY,JPY,THB");
+    const norm2 = normalizeFromFrankfurter(raw2);
+    if([norm2.rates.CNY, norm2.rates.JPY, norm2.rates.THB].some(v => typeof v !== "number")) throw new Error("备用源缺少所需币种");
+    return norm2;
+  }
 }
 
 async function refresh(){
@@ -104,7 +147,6 @@ async function refresh(){
 
 $("btn").addEventListener("click", refresh);
 
-// 网络状态提示
 function updateNet(){
   $("net").textContent = navigator.onLine ? "在线" : "离线";
 }
@@ -112,7 +154,6 @@ window.addEventListener("online", updateNet);
 window.addEventListener("offline", updateNet);
 updateNet();
 
-// 注册 Service Worker 以支持“添加到主屏幕”和离线打开页面壳（离线时无法刷新汇率）
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(()=>{});
 }

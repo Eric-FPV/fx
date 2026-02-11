@@ -1,5 +1,4 @@
-// 简易离线缓存：缓存页面壳，离线时仍可打开，但离线无法刷新汇率
-const CACHE = "fx-v1";
+const CACHE = "fx-v2";
 const ASSETS = ["./", "./index.html", "./manifest.json"];
 
 self.addEventListener("install", (event) => {
@@ -15,8 +14,6 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
-
-  // 只对同源静态资源做缓存策略
   if (url.origin === location.origin) {
     event.respondWith(
       caches.match(req).then((cached) => cached || fetch(req).then((resp) => {
