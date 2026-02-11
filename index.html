@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#111111"/>
+  <link rel="manifest" href="manifest.json">
+  <title>一键汇率（USD/CNY/JPY/THB）</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"PingFang SC","Microsoft YaHei",sans-serif;margin:16px;line-height:1.4}
+    button{font-size:16px;padding:12px 14px;border-radius:10px;border:0;background:#111;color:#fff}
+    .card{margin-top:14px;padding:14px;border:1px solid #ddd;border-radius:12px}
+    .row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px dashed #eee}
+    .row:last-child{border-bottom:0}
+    .muted{color:#666;font-size:13px;margin-top:8px}
+    .err{color:#b00020}
+    .mono{font-variant-numeric:tabular-nums}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .pill{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid #ddd;font-size:12px;color:#333}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <h2 style="margin:0">一键汇率</h2>
+    <span class="pill" id="net">离线</span>
+  </div>
+  <p class="muted">点一次“刷新汇率”即可抓取最新报价（USD/CNY/JPY/THB），并自动计算常用交叉汇率。</p>
+
+  <button id="btn">刷新汇率</button>
+
+  <div class="card" id="status">尚未获取</div>
+
+  <div class="card" id="rates" style="display:none">
+    <div class="row"><div>USD → CNY</div><div class="mono" id="usd_cny"></div></div>
+    <div class="row"><div>USD → JPY</div><div class="mono" id="usd_jpy"></div></div>
+    <div class="row"><div>USD → THB</div><div class="mono" id="usd_thb"></div></div>
+
+    <hr style="border:0;border-top:1px solid #eee;margin:12px 0">
+
+    <div class="row"><div>CNY → THB</div><div class="mono" id="cny_thb"></div></div>
+    <div class="row"><div>THB → CNY</div><div class="mono" id="thb_cny"></div></div>
+
+    <div class="row"><div>CNY → JPY</div><div class="mono" id="cny_jpy"></div></div>
+    <div class="row"><div>JPY → CNY</div><div class="mono" id="jpy_cny"></div></div>
+
+    <div class="row"><div>THB → JPY</div><div class="mono" id="thb_jpy"></div></div>
+    <div class="row"><div>JPY → THB</div><div class="mono" id="jpy_thb"></div></div>
+
+    <p class="muted" id="meta"></p>
+  </div>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+
+function fmt(x, d=6){
+  if(!isFinite(x)) return "—";
+  return Number(x).toFixed(d);
+}
+
+// 数据源：exchangerate.host
+async function fetchRatesUSD() {
+  const url = "https://api.exchangerate.host/latest?base=USD&symbols=CNY,JPY,THB";
+  const res = await fetch(url, {cache:"no-store"});
+  if(!res.ok) throw new Error("HTTP " + res.status);
+  return await res.json();
+}
+
+function setStatus(msg, isErr=false){
+  $("status").innerHTML = isErr ? `<span class="err">${msg}</span>` : msg;
+}
+
+function showRates(r){
+  const CNY = r.rates.CNY, JPY = r.rates.JPY, THB = r.rates.THB;
+
+  $("usd_cny").textContent = fmt(CNY, 6);
+  $("usd_jpy").textContent = fmt(JPY, 6);
+  $("usd_thb").textContent = fmt(THB, 6);
+
+  // 交叉汇率：A->B = (USD->B) / (USD->A)
+  $("cny_thb").textContent = fmt(THB / CNY, 6);
+  $("thb_cny").textContent = fmt(CNY / THB, 6);
+
+  $("cny_jpy").textContent = fmt(JPY / CNY, 6);
+  $("jpy_cny").textContent = fmt(CNY / JPY, 8);
+
+  $("thb_jpy").textContent = fmt(JPY / THB, 6);
+  $("jpy_thb").textContent = fmt(THB / JPY, 8);
+
+  const ts = new Date().toLocaleString();
+  $("meta").textContent = `基准：${r.base}；接口日期字段：${r.date || "—"}；本机刷新时间：${ts}`;
+  $("rates").style.display = "block";
+}
+
+async function refresh(){
+  setStatus("获取中…");
+  try{
+    const r = await fetchRatesUSD();
+    setStatus("获取成功 ✅");
+    showRates(r);
+  }catch(e){
+    setStatus("获取失败：" + (e?.message || e), true);
+  }
+}
+
+$("btn").addEventListener("click", refresh);
+
+// 网络状态提示
+function updateNet(){
+  $("net").textContent = navigator.onLine ? "在线" : "离线";
+}
+window.addEventListener("online", updateNet);
+window.addEventListener("offline", updateNet);
+updateNet();
+
+// 注册 Service Worker 以支持“添加到主屏幕”和离线打开页面壳（离线时无法刷新汇率）
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
+</script>
+</body>
+</html>
